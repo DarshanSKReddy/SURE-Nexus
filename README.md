@@ -86,4 +86,4 @@ To create a scalable digital infrastructure that strengthens employability outco
 
 ## 👨‍💻 Developer
 
-Built as a Full-Stack Engineering Project in collaboration with SURE Trust.
+Built as a Full-Stack Engineering Project as a SURE Trust intern.
