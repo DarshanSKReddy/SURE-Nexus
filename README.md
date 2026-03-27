@@ -3,7 +3,6 @@
 A Professional Digital Portfolio & Internship Management Platform for SURE Trust.
 
 ---
-
 ## 🌍 About SURE Trust
 
 SURE Trust (Skill Upgradation for Rural-youth Empowerment) is a non-profit organization dedicated to transforming educated but unemployed rural youth into industry-ready professionals.
