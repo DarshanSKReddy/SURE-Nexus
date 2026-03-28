@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
+import { useRouter } from "next/navigation";
 
 export default function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const router = useRouter();
 
   const handleLogin = async () => {
     try {
@@ -16,13 +18,13 @@ export default function Login() {
 
       if (error) throw error;
 
-      alert("Login successful");
+      router.push("/dashboard"); // ✅ redirect
     } catch (err) {
-      if (err instanceof Error) {  
-          alert(err.message);
-        } else {
-            alert("An unknown error occurred");
-        }     
+      if (err instanceof Error) {
+        alert(err.message);
+      } else {
+        alert("An unknown error occurred");
+      }
     }
   };
 
