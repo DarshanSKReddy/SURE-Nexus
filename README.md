@@ -1,9 +1,9 @@
-# SURE-Nexus 🚀
+# SURE-Nexus 
 
 A Professional Digital Portfolio & Internship Management Platform for SURE Trust.
 
 ---
-## 🌍 About SURE Trust
+##  About SURE Trust
 
 SURE Trust (Skill Upgradation for Rural-youth Empowerment) is a non-profit organization dedicated to transforming educated but unemployed rural youth into industry-ready professionals.
 
@@ -18,19 +18,19 @@ It bridges the gap between academic education and industry requirements by provi
 
 ---
 
-## 🚀 Project Vision
+##  Project Vision
 
 SURE-Nexus enables students to:
 
-* 📌 Document internship progress
-* 📌 Showcase verified technical projects
-* 📌 Receive structured mentor feedback
-* 📌 Generate public recruiter-ready profiles
-* 📌 Build proof-of-work portfolios
+*  Document internship progress
+*  Showcase verified technical projects
+*  Receive structured mentor feedback
+*  Generate public recruiter-ready profiles
+*  Build proof-of-work portfolios
 
 ---
 
-## 🏗️ Architecture
+##  Architecture
 
 ```
 Client (Next.js UI)
@@ -44,7 +44,7 @@ Supabase (PostgreSQL + Auth)
 
 ---
 
-## ⚙️ Tech Stack
+##  Tech Stack
 
 **Frontend**
 
@@ -67,24 +67,24 @@ Supabase (PostgreSQL + Auth)
 
 ---
 
-## 🔐 Core Features
+##  Core Features
 
-* 🔑 Role-Based Authentication (Student / Mentor / Admin)
-* 📊 Domain & Internship Tracking
-* 📁 Project Submission System
+*  Role-Based Authentication (Student / Mentor / Admin)
+*  Domain & Internship Tracking
+*  Project Submission System
 * ⭐ Mentor Feedback & Rating
-* 🌐 Public Student Portfolio Pages
-* 📄 Resume Data Engine
+*  Public Student Portfolio Pages
+*  Resume Data Engine
 
 ---
 
-## 📸 Screenshots (Coming Soon)
+##  Screenshots (Coming Soon)
 
 > Will be updated as development progresses.
 
 ---
 
-## 🛠️ Local Setup
+##  Local Setup
 
 Clone the repository:
 
@@ -107,7 +107,7 @@ npm run dev
 
 ---
 
-## 🔑 Environment Variables
+##  Environment Variables
 
 Create a `.env.local` file:
 
@@ -118,22 +118,22 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your_anon_key
 
 ---
 
-## 🎯 Project Status
+##  Project Status
 
-🚧 Currently in active development
-✔ Initial setup completed
-✔ Supabase integration completed
+ Currently in active development
+ Initial setup completed
+ Supabase integration completed
 ⏳ Authentication module in progress
 
 ---
 
-## 👨‍💻 Developer
+##  Developer
 
 Built as a Full-Stack Engineering Project under SURE Trust Internship Program.
 
 ---
 
-## 🌟 Future Scope
+##  Future Scope
 
 * AI-powered resume generation
 * Skill analytics dashboard
