@@ -23,11 +23,32 @@ type Profile = {
 
 type Project = { id: string; title: string; description: string; project_url?: string; };
 type Certificate = { id: string; title: string; issuer: string; credential_url?: string; };
+type CourseProgress = {
+  course_id: string;
+  score: number | null;
+  passed: boolean | null;
+  updated_at?: string;
+};
+type AiInsight = {
+  learning_status: string;
+  recommendations: string[];
+  model_source?: string;
+};
+
+const COURSE_LABELS: Record<string, string> = {
+  python_day_1: "Python 100 Days - Day 1",
+  python_day_2: "Python 100 Days - Day 2",
+  webdev_section_1: "Web Development - Section 1",
+  webdev_section_2: "Web Development - Section 2",
+};
 
 export default function Dashboard() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
+  const [recentLearning, setRecentLearning] = useState<CourseProgress[]>([]);
+  const [aiInsight, setAiInsight] = useState<AiInsight | null>(null);
+  const [aiLoading, setAiLoading] = useState(false);
   const [hasStartedCourses, setHasStartedCourses] = useState(false);
   const [loading, setLoading] = useState(true);
   
@@ -56,6 +77,31 @@ export default function Dashboard() {
   const [certTitle, setCertTitle] = useState("");
   const [certIssuer, setCertIssuer] = useState("");
   const [certUrl, setCertUrl] = useState("");
+  const [plannerExpanded, setPlannerExpanded] = useState(false);
+  const [plannerMonthOffset, setPlannerMonthOffset] = useState(0);
+  const [plannerTab, setPlannerTab] = useState<"ongoing" | "completed" | "missed">("ongoing");
+
+  const plannerDate = new Date();
+  plannerDate.setMonth(plannerDate.getMonth() + plannerMonthOffset);
+  const monthName = plannerDate.toLocaleString("en-US", { month: "long", year: "numeric" });
+  const startOfMonth = new Date(plannerDate.getFullYear(), plannerDate.getMonth(), 1);
+  const startWeekday = (startOfMonth.getDay() + 6) % 7;
+  const daysInMonth = new Date(plannerDate.getFullYear(), plannerDate.getMonth() + 1, 0).getDate();
+  const dayCells = Array.from({ length: 42 }, (_, index) => {
+    const dayNumber = index - startWeekday + 1;
+    const isInCurrentMonth = dayNumber >= 1 && dayNumber <= daysInMonth;
+    const isToday =
+      isInCurrentMonth &&
+      plannerDate.getFullYear() === new Date().getFullYear() &&
+      plannerDate.getMonth() === new Date().getMonth() &&
+      dayNumber === new Date().getDate();
+
+    return {
+      day: isInCurrentMonth ? dayNumber : "",
+      dimmed: !isInCurrentMonth,
+      isToday,
+    };
+  });
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -74,9 +120,51 @@ export default function Dashboard() {
       setCertificates((certsData as Certificate[]) || []);
 
       // Check Course Progress
-      const { data: progressData, error: progressError } = await supabase.from("course_progress").select("id").eq("user_id", userData.user.id).limit(1);
-      if (!progressError && progressData && progressData.length > 0) {
+      const { data: progressData, error: progressError } = await supabase
+        .from("course_progress")
+        .select("course_id, score, passed, updated_at")
+        .eq("user_id", userData.user.id)
+        .order("updated_at", { ascending: false });
+
+      const progressRows = ((progressData as CourseProgress[]) || []).filter((row) => row.course_id);
+      if (!progressError && progressRows.length > 0) {
         setHasStartedCourses(true);
+        const uniqueRecentRows = Array.from(
+          new Map(progressRows.map((row) => [row.course_id, row])).values(),
+        ).slice(0, 5);
+        setRecentLearning(uniqueRecentRows);
+
+        const latestScore = typeof progressRows[0]?.score === "number" ? progressRows[0].score : 0;
+        const attempts = progressRows.length;
+        const passedCount = progressRows.filter((row) => row.passed === true).length;
+        const completionPercentage = Math.min(100, Math.round((passedCount / Math.max(1, attempts)) * 100));
+        const timeSpentMinutes = Math.max(15, attempts * 35);
+        const mlApiUrl = process.env.NEXT_PUBLIC_ML_API_URL;
+
+        if (mlApiUrl) {
+          try {
+            setAiLoading(true);
+            const response = await fetch(`${mlApiUrl}/predict-risk`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                quiz_score: latestScore,
+                attempts,
+                completion_percentage: completionPercentage,
+                time_spent_minutes: timeSpentMinutes,
+              }),
+            });
+
+            if (response.ok) {
+              const insight = (await response.json()) as AiInsight;
+              setAiInsight(insight);
+            }
+          } catch {
+            setAiInsight(null);
+          } finally {
+            setAiLoading(false);
+          }
+        }
       }
 
       setLoading(false);
@@ -162,7 +250,7 @@ export default function Dashboard() {
       <div className="absolute bottom-[-10%] right-[-10%] w-96 h-96 bg-pink-600/10 rounded-full blur-[120px]"></div>
 
       <nav className="w-full border-b border-white/10 bg-black/50 backdrop-blur-md p-4 sticky top-0 z-50">
-        <div className="max-w-[1400px] mx-auto flex justify-between items-center relative px-2">
+        <div className="w-full max-w-[1800px] mx-auto flex justify-between items-center relative px-4 md:px-6">
           
           <div className="flex items-center gap-6">
             <h1 className="text-2xl font-black bg-gradient-to-r from-purple-400 to-pink-500 bg-clip-text text-transparent tracking-tighter">
@@ -195,13 +283,13 @@ export default function Dashboard() {
         </div>
       </nav>
 
-      <main className="max-w-[1400px] mx-auto p-4 md:p-6 pt-8 z-10 relative">
+      <main className="w-full max-w-[1800px] mx-auto px-4 md:px-6 pt-6 pb-8 z-10 relative">
         {loading ? (
           <div className="flex justify-center items-center h-64"><div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-purple-500"></div></div>
         ) : profile ? (
-          <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 lg:gap-8">
+          <div className="grid grid-cols-1 xl:grid-cols-[360px_minmax(0,1fr)_390px] gap-4 xl:gap-5 items-start">
             
-            <div className="lg:col-span-1 space-y-6">
+            <div className="space-y-5">
               <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl flex flex-col items-center text-center">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={profile.avatar_url || DEFAULT_AVATAR} alt="avatar" className="w-32 h-32 rounded-full border-4 border-purple-500/50 object-cover shadow-lg shadow-purple-500/20 bg-[#111]" />
@@ -257,10 +345,10 @@ export default function Dashboard() {
               </div>
             </div>
 
-            <div className="lg:col-span-3 space-y-6">
+            <div className="space-y-5">
               
               {/* 🟢 NEW: Compact Learning Banner linking directly to SkillXplore (/courses) */}
-              <div className="bg-gradient-to-r from-purple-900/40 to-black border border-purple-500/30 rounded-2xl p-6 shadow-2xl flex flex-col sm:flex-row justify-between items-center gap-4 relative overflow-hidden group">
+              <div className="bg-gradient-to-r from-purple-900/40 to-black border border-purple-500/30 rounded-2xl p-5 shadow-2xl flex flex-col sm:flex-row justify-between items-center gap-3 relative overflow-hidden group">
                 <div className="absolute top-0 right-0 w-64 h-64 bg-purple-500/10 rounded-full blur-[80px] pointer-events-none"></div>
                 <div>
                   <h3 className="text-xl font-black text-white mb-1">
@@ -288,6 +376,60 @@ export default function Dashboard() {
                   <p className="text-white font-bold">Web Development - Section 1</p>
                   <p className="text-gray-400 text-sm mt-1">Complete the quiz with 8/10 to unlock Section 2.</p>
                 </Link>
+              </div>
+
+              <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl">
+                  <h3 className="text-xl font-semibold text-gray-200 mb-2">AI Learning Insight</h3>
+                  {aiLoading ? (
+                    <p className="text-sm text-gray-400">Analyzing your recent learning activity...</p>
+                  ) : aiInsight ? (
+                    <>
+                      <p className="text-sm text-gray-400 mb-2">Current Status</p>
+                      <p className="text-lg font-bold text-purple-300 mb-4">{aiInsight.learning_status}</p>
+                      <ul className="space-y-2 text-sm text-gray-300 list-disc pl-5">
+                        {(aiInsight.recommendations || []).slice(0, 3).map((rec, index) => (
+                          <li key={`${index}-${rec.slice(0, 12)}`}>{rec}</li>
+                        ))}
+                      </ul>
+                      {aiInsight.model_source && (
+                        <p className="text-xs text-gray-500 mt-4">Model: {aiInsight.model_source}</p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="text-sm text-gray-400">Complete a quiz to unlock personalized AI learning insight.</p>
+                  )}
+                </div>
+
+                <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl">
+                  <h3 className="text-xl font-semibold text-gray-200 mb-4">Recent Learning</h3>
+                  {recentLearning.length === 0 ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <Link href="/courses/python/day-1" className="bg-black/30 border border-white/10 rounded-xl p-4 hover:border-purple-500 transition-colors">
+                        <p className="text-sm font-semibold text-white">Python 100 Days - Day 1</p>
+                        <p className="text-xs text-gray-400 mt-1">Start this module to see your learning progress here.</p>
+                      </Link>
+                      <Link href="/courses/webdev/section-1" className="bg-black/30 border border-white/10 rounded-xl p-4 hover:border-blue-500 transition-colors">
+                        <p className="text-sm font-semibold text-white">Web Development - Section 1</p>
+                        <p className="text-xs text-gray-400 mt-1">Begin a course and your recent learning will appear here.</p>
+                      </Link>
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {recentLearning.map((item, index) => {
+                        const label = COURSE_LABELS[item.course_id] || item.course_id.replaceAll("_", " ");
+                        return (
+                          <div key={`${item.course_id}-${index}`} className="bg-black/30 border border-white/10 rounded-lg p-3">
+                            <p className="text-sm font-semibold text-white">{label}</p>
+                            <p className="text-xs text-gray-400 mt-1">
+                              Score: {typeof item.score === "number" ? `${item.score}/10` : "N/A"} • {item.passed ? "Passed" : "In Progress"}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Course and Certifications */}
@@ -337,6 +479,95 @@ export default function Dashboard() {
               </div>
 
             </div>
+
+            <aside className="space-y-4 xl:sticky xl:top-24 self-start w-full">
+              <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-2xl p-4 shadow-2xl w-full">
+                <div className="flex items-center justify-between gap-3 mb-4">
+                  <button
+                    onClick={() => setPlannerExpanded((prev) => !prev)}
+                    className="px-4 py-2 rounded-lg border border-white/10 bg-black/40 text-white text-sm font-bold"
+                  >
+                    Day Planner
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setPlannerMonthOffset((prev) => prev - 1)}
+                      className="h-8 w-8 rounded-full border border-white/10 bg-black/40 text-gray-300 hover:text-white"
+                    >
+                      {"<"}
+                    </button>
+                    <span className="px-3 py-1 rounded-lg bg-white/10 text-white text-sm font-bold min-w-[96px] text-center">
+                      {monthName}
+                    </span>
+                    <button
+                      onClick={() => setPlannerMonthOffset((prev) => prev + 1)}
+                      className="h-8 w-8 rounded-full border border-white/10 bg-black/40 text-gray-300 hover:text-white"
+                    >
+                      {">"}
+                    </button>
+                  </div>
+                </div>
+
+                {!plannerExpanded ? (
+                  <>
+                    <div className="grid grid-cols-7 gap-2 text-center text-xs text-gray-400 mb-3">
+                      {["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map((label) => (
+                        <span key={label}>{label}</span>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-7 gap-2">
+                      {dayCells.map((cell, idx) => (
+                        <div
+                          key={`${cell.day}-${idx}`}
+                          className={`h-8 rounded-md text-sm flex items-center justify-center ${
+                            cell.isToday
+                              ? "bg-orange-500/20 text-orange-300 font-bold"
+                              : cell.dimmed
+                                ? "text-gray-600"
+                                : "text-gray-200"
+                          }`}
+                        >
+                          {cell.day}
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="rounded-xl border border-white/10 bg-black/30 p-4 min-h-[430px] flex flex-col">
+                    <div className="grid grid-cols-3 gap-2 mb-6">
+                      <button
+                        onClick={() => setPlannerTab("ongoing")}
+                        className={`py-2 rounded-lg text-sm font-semibold border ${plannerTab === "ongoing" ? "bg-orange-500/15 border-orange-500/30 text-orange-300" : "bg-black/30 border-white/10 text-gray-400"}`}
+                      >
+                        Ongoing (0)
+                      </button>
+                      <button
+                        onClick={() => setPlannerTab("completed")}
+                        className={`py-2 rounded-lg text-sm font-semibold border ${plannerTab === "completed" ? "bg-orange-500/15 border-orange-500/30 text-orange-300" : "bg-black/30 border-white/10 text-gray-400"}`}
+                      >
+                        Completed (0)
+                      </button>
+                      <button
+                        onClick={() => setPlannerTab("missed")}
+                        className={`py-2 rounded-lg text-sm font-semibold border ${plannerTab === "missed" ? "bg-orange-500/15 border-orange-500/30 text-orange-300" : "bg-black/30 border-white/10 text-gray-400"}`}
+                      >
+                        Missed (0)
+                      </button>
+                    </div>
+
+                    <div className="flex-1 rounded-xl border border-white/10 bg-black/20 flex items-center justify-center text-center p-4">
+                      <div>
+                        <div className="w-14 h-14 mx-auto mb-4 rounded-2xl border border-orange-500/30 bg-orange-500/10 flex items-center justify-center text-orange-300 text-2xl">
+                          📝
+                        </div>
+                        <p className="text-white font-semibold mb-1">Plan your daily tasks here</p>
+                        <p className="text-gray-500 text-sm">Track, manage, and complete accordingly</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </aside>
           </div>
         ) : null}
       </main>
