@@ -162,23 +162,28 @@ export default function WebDevSection2Page() {
           .select("passed")
           .eq("user_id", userId)
           .eq("course_id", "webdev_section_1")
-          .maybeSingle(),
+          .order("updated_at", { ascending: false }),
         supabase
           .from("course_progress")
           .select("passed, score")
           .eq("user_id", userId)
           .eq("course_id", "webdev_section_2")
-          .maybeSingle(),
+          .order("updated_at", { ascending: false }),
       ]);
 
       if (isCancelled) return;
 
-      const section1Passed = Boolean(section1Progress?.passed);
+      const section1Rows = (section1Progress || []) as Array<{ passed: boolean | null }>;
+      const section2Rows = (section2Progress || []) as Array<{ passed: boolean | null; score: number | null }>;
+
+      const section1Passed = section1Rows.some((row) => row.passed === true);
       setIsLocked(!section1Passed);
 
-      if (section2Progress?.passed) {
+      const section2PassedRow = section2Rows.find((row) => row.passed === true);
+      if (section2PassedRow) {
         setAlreadyPassed(true);
-        if (typeof section2Progress.score === "number") setScore(section2Progress.score);
+        const latestScore = section2Rows.find((row) => typeof row.score === "number")?.score;
+        if (typeof latestScore === "number") setScore(latestScore);
       }
 
       setCheckingAccess(false);
@@ -208,12 +213,21 @@ export default function WebDevSection2Page() {
 
     const { data: userData } = await supabase.auth.getUser();
     if (userData?.user) {
-      await supabase.from("course_progress").upsert({
+      const { error } = await supabase.from("course_progress").upsert({
         user_id: userData.user.id,
         course_id: "webdev_section_2",
         score: calculatedScore,
         passed,
       });
+
+      if (error) {
+        await supabase.from("course_progress").insert({
+          user_id: userData.user.id,
+          course_id: "webdev_section_2",
+          score: calculatedScore,
+          passed,
+        });
+      }
     }
 
     if (passed) setAlreadyPassed(true);

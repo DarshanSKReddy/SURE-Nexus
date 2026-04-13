@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 const QUIZ_QUESTIONS = [
@@ -127,6 +128,7 @@ const CONTENT_SECTIONS = [
 ];
 
 export default function WebDevSection1Page() {
+  const router = useRouter();
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<Record<number, number>>({});
   const [isSubmitted, setIsSubmitted] = useState(false);
@@ -148,13 +150,17 @@ export default function WebDevSection1Page() {
         .select("passed, score")
         .eq("user_id", userData.user.id)
         .eq("course_id", "webdev_section_1")
-        .maybeSingle();
+        .order("updated_at", { ascending: false });
 
       if (isCancelled) return;
 
-      if (data?.passed) {
+      const rows = (data || []) as Array<{ passed: boolean | null; score: number | null }>;
+      const passedRow = rows.find((row) => row.passed === true);
+      const latestScore = rows.find((row) => typeof row.score === "number")?.score;
+
+      if (passedRow) {
         setAlreadyPassed(true);
-        if (typeof data.score === "number") setScore(data.score);
+        if (typeof latestScore === "number") setScore(latestScore);
       }
     };
 
@@ -184,15 +190,27 @@ export default function WebDevSection1Page() {
 
     const { data: userData } = await supabase.auth.getUser();
     if (userData?.user) {
-      await supabase.from("course_progress").upsert({
+      const { error } = await supabase.from("course_progress").upsert({
         user_id: userData.user.id,
         course_id: "webdev_section_1",
         score: calculatedScore,
         passed,
       });
+
+      if (error) {
+        await supabase.from("course_progress").insert({
+          user_id: userData.user.id,
+          course_id: "webdev_section_1",
+          score: calculatedScore,
+          passed,
+        });
+      }
     }
 
-    if (passed) setAlreadyPassed(true);
+    if (passed) {
+      setAlreadyPassed(true);
+      router.push("/courses/webdev/section-2");
+    }
     setSaving(false);
   };
 
@@ -315,11 +333,7 @@ export default function WebDevSection1Page() {
 
                   <div className="flex flex-col sm:flex-row gap-4 justify-center">
                     <button onClick={retakeQuiz} className="bg-white/10 hover:bg-white/20 text-white px-8 py-3 rounded-xl font-bold transition-all">Retake Quiz</button>
-                    {score >= 8 && (
-                      <Link href="/courses/webdev/section-2" className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-bold transition-all">
-                        Go to Section 2 -{">"}
-                      </Link>
-                    )}
+                    {score >= 8 && <Link href="/courses/webdev/section-2" className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-xl font-bold transition-all">Go to Section 2 -{">"}</Link>}
                   </div>
                 </div>
               )}
