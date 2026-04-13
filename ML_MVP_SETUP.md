@@ -31,6 +31,8 @@ python train_risk_model.py
 
 This creates: `ml_service/model/risk_model.joblib`
 
+It also writes model quality metrics to: `ml_service/model/metrics_summary.txt`
+
 If you want to train on Supabase export, replace the CSV path in `train_risk_model.py` or copy exported CSV over `sample_training_data.csv`.
 
 ## 4) Start FastAPI service
@@ -99,10 +101,10 @@ Current app already stores module score in `course_progress`. You can additional
 
 ```json
 {
-  "average_quiz_score": 7.4,
-  "attempts_total": 5,
-  "completion_percent": 50,
-  "average_time_spent_minutes": 28
+  "quiz_score": 7.4,
+  "attempts": 5,
+  "completion_percentage": 50,
+  "time_spent_minutes": 28
 }
 ```
 
