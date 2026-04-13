@@ -93,6 +93,56 @@ with check (auth.uid() = user_id);
 
 Current app already stores module score in `course_progress`. You can additionally log each quiz submit into `course_quiz_attempts` from quiz pages to improve model quality over time.
 
+## 8) Enable Cloud Day Planner (Supabase)
+
+The dashboard planner supports two modes:
+
+- `Cloud` mode when table `planner_tasks` exists and RLS policies allow access.
+- `Local` mode fallback using browser storage when cloud table is unavailable.
+
+Run this SQL in Supabase to enable cloud sync:
+
+```sql
+create table if not exists public.planner_tasks (
+  id uuid primary key,
+  user_id uuid not null,
+  date_key date not null,
+  title text not null,
+  status text not null check (status in ('ongoing', 'completed', 'missed')),
+  created_at timestamptz not null default now()
+);
+
+create index if not exists planner_tasks_user_date_idx
+on public.planner_tasks (user_id, date_key);
+
+alter table public.planner_tasks enable row level security;
+
+drop policy if exists "Users can view own planner tasks" on public.planner_tasks;
+create policy "Users can view own planner tasks"
+on public.planner_tasks
+for select
+using (auth.uid() = user_id);
+
+drop policy if exists "Users can insert own planner tasks" on public.planner_tasks;
+create policy "Users can insert own planner tasks"
+on public.planner_tasks
+for insert
+with check (auth.uid() = user_id);
+
+drop policy if exists "Users can update own planner tasks" on public.planner_tasks;
+create policy "Users can update own planner tasks"
+on public.planner_tasks
+for update
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+drop policy if exists "Users can delete own planner tasks" on public.planner_tasks;
+create policy "Users can delete own planner tasks"
+on public.planner_tasks
+for delete
+using (auth.uid() = user_id);
+```
+
 ## API Contract
 
 ### Request
