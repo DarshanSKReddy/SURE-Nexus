@@ -35,6 +35,15 @@ type AiInsight = {
   model_source?: string;
 };
 
+type PlannerStatus = "ongoing" | "completed" | "missed";
+type PlannerTask = {
+  id: string;
+  dateKey: string;
+  title: string;
+  status: PlannerStatus;
+  createdAt: string;
+};
+
 function buildLocalInsight(averageScore: number, completionPercentage: number): AiInsight {
   if (averageScore >= 8 && completionPercentage >= 70) {
     return {
@@ -75,6 +84,13 @@ const COURSE_LABELS: Record<string, string> = {
   webdev_section_2: "Web Development - Section 2",
 };
 
+function formatDateKey(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 export default function Dashboard() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -113,6 +129,11 @@ export default function Dashboard() {
   const [plannerExpanded, setPlannerExpanded] = useState(false);
   const [plannerMonthOffset, setPlannerMonthOffset] = useState(0);
   const [plannerTab, setPlannerTab] = useState<"ongoing" | "completed" | "missed">("ongoing");
+  const [selectedPlannerDate, setSelectedPlannerDate] = useState<Date>(new Date());
+  const [plannerInput, setPlannerInput] = useState("");
+  const [plannerTasks, setPlannerTasks] = useState<PlannerTask[]>([]);
+
+  const plannerStorageKey = profile?.id ? `sure_nexus_planner_${profile.id}` : null;
 
   const plannerDate = new Date();
   plannerDate.setMonth(plannerDate.getMonth() + plannerMonthOffset);
@@ -120,9 +141,33 @@ export default function Dashboard() {
   const startOfMonth = new Date(plannerDate.getFullYear(), plannerDate.getMonth(), 1);
   const startWeekday = (startOfMonth.getDay() + 6) % 7;
   const daysInMonth = new Date(plannerDate.getFullYear(), plannerDate.getMonth() + 1, 0).getDate();
+  const selectedDateKey = formatDateKey(selectedPlannerDate);
+
+  const selectedDateTasks = plannerTasks.filter((task) => task.dateKey === selectedDateKey);
+  const ongoingTasks = selectedDateTasks.filter((task) => task.status === "ongoing");
+  const completedTasks = selectedDateTasks.filter((task) => task.status === "completed");
+  const missedTasks = selectedDateTasks.filter((task) => task.status === "missed");
+  const visibleTasks =
+    plannerTab === "ongoing"
+      ? ongoingTasks
+      : plannerTab === "completed"
+        ? completedTasks
+        : missedTasks;
+
+  const selectedDateLabel = selectedPlannerDate.toLocaleDateString("en-US", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  });
+
   const dayCells = Array.from({ length: 42 }, (_, index) => {
     const dayNumber = index - startWeekday + 1;
     const isInCurrentMonth = dayNumber >= 1 && dayNumber <= daysInMonth;
+    const cellDate = isInCurrentMonth ? new Date(plannerDate.getFullYear(), plannerDate.getMonth(), dayNumber) : null;
+    const dateKey = cellDate ? formatDateKey(cellDate) : "";
+    const taskCount = dateKey ? plannerTasks.filter((task) => task.dateKey === dateKey).length : 0;
+    const isSelected = dateKey === selectedDateKey;
     const isToday =
       isInCurrentMonth &&
       plannerDate.getFullYear() === new Date().getFullYear() &&
@@ -131,10 +176,85 @@ export default function Dashboard() {
 
     return {
       day: isInCurrentMonth ? dayNumber : "",
+      dateKey,
+      taskCount,
+      isSelected,
       dimmed: !isInCurrentMonth,
       isToday,
     };
   });
+
+  useEffect(() => {
+    if (!plannerStorageKey) return;
+    try {
+      const raw = localStorage.getItem(plannerStorageKey);
+      if (!raw) {
+        setPlannerTasks([]);
+        return;
+      }
+      const parsed = JSON.parse(raw) as PlannerTask[];
+      if (Array.isArray(parsed)) {
+        setPlannerTasks(
+          parsed.filter(
+            (task) =>
+              typeof task.id === "string" &&
+              typeof task.dateKey === "string" &&
+              typeof task.title === "string" &&
+              (task.status === "ongoing" || task.status === "completed" || task.status === "missed"),
+          ),
+        );
+      }
+    } catch {
+      setPlannerTasks([]);
+    }
+  }, [plannerStorageKey]);
+
+  useEffect(() => {
+    if (!plannerStorageKey) return;
+    localStorage.setItem(plannerStorageKey, JSON.stringify(plannerTasks));
+  }, [plannerStorageKey, plannerTasks]);
+
+  const addPlannerTask = () => {
+    const title = plannerInput.trim();
+    if (!title) return;
+
+    const taskId = typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+    setPlannerTasks((prev) => [
+      {
+        id: taskId,
+        dateKey: selectedDateKey,
+        title,
+        status: "ongoing",
+        createdAt: new Date().toISOString(),
+      },
+      ...prev,
+    ]);
+    setPlannerInput("");
+    setPlannerTab("ongoing");
+  };
+
+  const toggleTaskCompleted = (taskId: string) => {
+    setPlannerTasks((prev) =>
+      prev.map((task) =>
+        task.id === taskId
+          ? { ...task, status: task.status === "completed" ? "ongoing" : "completed" }
+          : task,
+      ),
+    );
+  };
+
+  const markTaskMissed = (taskId: string) => {
+    setPlannerTasks((prev) =>
+      prev.map((task) => (task.id === taskId ? { ...task, status: "missed" } : task)),
+    );
+  };
+
+  const deletePlannerTask = (taskId: string) => {
+    setPlannerTasks((prev) => prev.filter((task) => task.id !== taskId));
+  };
 
   useEffect(() => {
     async function loadDashboardData() {
@@ -558,52 +678,123 @@ export default function Dashboard() {
                     </div>
                     <div className="grid grid-cols-7 gap-2">
                       {dayCells.map((cell, idx) => (
-                        <div
+                        <button
                           key={`${cell.day}-${idx}`}
+                          onClick={() => {
+                            if (!cell.dimmed && cell.day) {
+                              const dayNumber = Number(cell.day);
+                              setSelectedPlannerDate(new Date(plannerDate.getFullYear(), plannerDate.getMonth(), dayNumber));
+                              setPlannerExpanded(true);
+                            }
+                          }}
+                          disabled={cell.dimmed || !cell.day}
                           className={`h-8 rounded-md text-sm flex items-center justify-center ${
-                            cell.isToday
-                              ? "bg-orange-500/20 text-orange-300 font-bold"
+                            cell.isSelected
+                              ? "bg-blue-500/25 text-blue-300 font-bold"
+                              : cell.isToday
+                                ? "bg-orange-500/20 text-orange-300 font-bold"
                               : cell.dimmed
                                 ? "text-gray-600"
                                 : "text-gray-200"
-                          }`}
+                          } ${!cell.dimmed ? "hover:bg-white/10" : "cursor-default"}`}
                         >
-                          {cell.day}
-                        </div>
+                          <span>{cell.day}</span>
+                          {cell.taskCount > 0 && !cell.dimmed && (
+                            <span className="ml-1 text-[10px] text-emerald-300">•</span>
+                          )}
+                        </button>
                       ))}
                     </div>
                   </>
                 ) : (
                   <div className="rounded-xl border border-white/10 bg-black/30 p-4 min-h-[430px] flex flex-col">
+                    <div className="mb-4">
+                      <p className="text-sm text-gray-400">Selected Date</p>
+                      <p className="text-white font-semibold">{selectedDateLabel}</p>
+                    </div>
+
+                    <div className="flex gap-2 mb-4">
+                      <input
+                        type="text"
+                        value={plannerInput}
+                        onChange={(e) => setPlannerInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") addPlannerTask();
+                        }}
+                        placeholder="Add note or task for this day"
+                        className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500/60"
+                      />
+                      <button
+                        onClick={addPlannerTask}
+                        className="px-4 py-2 rounded-lg bg-orange-500/20 border border-orange-500/40 text-orange-300 text-sm font-semibold hover:bg-orange-500/30"
+                      >
+                        Add
+                      </button>
+                    </div>
+
                     <div className="grid grid-cols-3 gap-2 mb-6">
                       <button
                         onClick={() => setPlannerTab("ongoing")}
                         className={`py-2 rounded-lg text-sm font-semibold border ${plannerTab === "ongoing" ? "bg-orange-500/15 border-orange-500/30 text-orange-300" : "bg-black/30 border-white/10 text-gray-400"}`}
                       >
-                        Ongoing (0)
+                        Ongoing ({ongoingTasks.length})
                       </button>
                       <button
                         onClick={() => setPlannerTab("completed")}
                         className={`py-2 rounded-lg text-sm font-semibold border ${plannerTab === "completed" ? "bg-orange-500/15 border-orange-500/30 text-orange-300" : "bg-black/30 border-white/10 text-gray-400"}`}
                       >
-                        Completed (0)
+                        Completed ({completedTasks.length})
                       </button>
                       <button
                         onClick={() => setPlannerTab("missed")}
                         className={`py-2 rounded-lg text-sm font-semibold border ${plannerTab === "missed" ? "bg-orange-500/15 border-orange-500/30 text-orange-300" : "bg-black/30 border-white/10 text-gray-400"}`}
                       >
-                        Missed (0)
+                        Missed ({missedTasks.length})
                       </button>
                     </div>
 
-                    <div className="flex-1 rounded-xl border border-white/10 bg-black/20 flex items-center justify-center text-center p-4">
-                      <div>
-                        <div className="w-14 h-14 mx-auto mb-4 rounded-2xl border border-orange-500/30 bg-orange-500/10 flex items-center justify-center text-orange-300 text-2xl">
-                          📝
+                    <div className="flex-1 rounded-xl border border-white/10 bg-black/20 p-3 overflow-y-auto">
+                      {visibleTasks.length === 0 ? (
+                        <div className="h-full flex items-center justify-center text-center p-4">
+                          <div>
+                            <p className="text-white font-semibold mb-1">No {plannerTab} tasks for this day</p>
+                            <p className="text-gray-500 text-sm">Add tasks and manage them by status.</p>
+                          </div>
                         </div>
-                        <p className="text-white font-semibold mb-1">Plan your daily tasks here</p>
-                        <p className="text-gray-500 text-sm">Track, manage, and complete accordingly</p>
-                      </div>
+                      ) : (
+                        <div className="space-y-2">
+                          {visibleTasks.map((task) => (
+                            <div key={task.id} className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/35 px-2 py-2">
+                              <button
+                                onClick={() => toggleTaskCompleted(task.id)}
+                                className={`h-5 w-5 rounded border text-xs flex items-center justify-center ${task.status === "completed" ? "bg-emerald-500/20 border-emerald-500/40 text-emerald-300" : "border-white/20 text-transparent hover:text-white/40"}`}
+                                title="Toggle complete"
+                              >
+                                ✓
+                              </button>
+                              <span className={`flex-1 text-sm ${task.status === "completed" ? "text-gray-400 line-through" : "text-gray-200"}`}>
+                                {task.title}
+                              </span>
+                              {task.status !== "missed" && task.status !== "completed" && (
+                                <button
+                                  onClick={() => markTaskMissed(task.id)}
+                                  className="px-2 py-1 text-xs rounded border border-amber-500/30 text-amber-300 hover:bg-amber-500/10"
+                                  title="Mark as missed"
+                                >
+                                  Missed
+                                </button>
+                              )}
+                              <button
+                                onClick={() => deletePlannerTask(task.id)}
+                                className="px-2 py-1 text-xs rounded border border-red-500/30 text-red-300 hover:bg-red-500/10"
+                                title="Delete task"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
