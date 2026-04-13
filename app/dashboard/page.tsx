@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/lib/supabaseClient";
 import Link from "next/link";
 
@@ -43,6 +43,8 @@ type PlannerTask = {
   status: PlannerStatus;
   createdAt: string;
 };
+
+type PlannerDataMode = "supabase" | "local";
 
 function buildLocalInsight(averageScore: number, completionPercentage: number): AiInsight {
   if (averageScore >= 8 && completionPercentage >= 70) {
@@ -91,6 +93,21 @@ function formatDateKey(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function markOverdueTasks(tasks: PlannerTask[]): { tasks: PlannerTask[]; changedTaskIds: string[] } {
+  const todayKey = formatDateKey(new Date());
+  const changedTaskIds: string[] = [];
+
+  const updated = tasks.map((task) => {
+    if (task.status === "ongoing" && task.dateKey < todayKey) {
+      changedTaskIds.push(task.id);
+      return { ...task, status: "missed" as PlannerStatus };
+    }
+    return task;
+  });
+
+  return { tasks: updated, changedTaskIds };
+}
+
 export default function Dashboard() {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
@@ -132,6 +149,8 @@ export default function Dashboard() {
   const [selectedPlannerDate, setSelectedPlannerDate] = useState<Date>(new Date());
   const [plannerInput, setPlannerInput] = useState("");
   const [plannerTasks, setPlannerTasks] = useState<PlannerTask[]>([]);
+  const [plannerDataMode, setPlannerDataMode] = useState<PlannerDataMode>("local");
+  const plannerImportInputRef = useRef<HTMLInputElement | null>(null);
 
   const plannerStorageKey = profile?.id ? `sure_nexus_planner_${profile.id}` : null;
 
@@ -185,36 +204,92 @@ export default function Dashboard() {
   });
 
   useEffect(() => {
-    if (!plannerStorageKey) return;
-    try {
-      const raw = localStorage.getItem(plannerStorageKey);
-      if (!raw) {
-        setPlannerTasks([]);
+    if (!plannerStorageKey || !profile?.id) return;
+    let cancelled = false;
+
+    const loadPlannerData = async () => {
+      const { data, error } = await supabase
+        .from("planner_tasks")
+        .select("id, date_key, title, status, created_at")
+        .eq("user_id", profile.id)
+        .order("created_at", { ascending: false });
+
+      if (!cancelled && !error && Array.isArray(data)) {
+        const supabaseTasks = data
+          .filter((task) => typeof task.id === "string" && typeof task.date_key === "string" && typeof task.title === "string")
+          .map(
+            (task): PlannerTask => ({
+              id: task.id,
+              dateKey: task.date_key,
+              title: task.title,
+              status: task.status === "completed" || task.status === "missed" ? task.status : "ongoing",
+              createdAt: typeof task.created_at === "string" ? task.created_at : new Date().toISOString(),
+            }),
+          );
+
+        const { tasks, changedTaskIds } = markOverdueTasks(supabaseTasks);
+        setPlannerDataMode("supabase");
+        setPlannerTasks(tasks);
+
+        if (changedTaskIds.length > 0) {
+          await Promise.all(
+            changedTaskIds.map((taskId) =>
+              supabase
+                .from("planner_tasks")
+                .update({ status: "missed" })
+                .eq("id", taskId)
+                .eq("user_id", profile.id),
+            ),
+          );
+        }
         return;
       }
-      const parsed = JSON.parse(raw) as PlannerTask[];
-      if (Array.isArray(parsed)) {
-        setPlannerTasks(
-          parsed.filter(
-            (task) =>
-              typeof task.id === "string" &&
-              typeof task.dateKey === "string" &&
-              typeof task.title === "string" &&
-              (task.status === "ongoing" || task.status === "completed" || task.status === "missed"),
-          ),
+
+      try {
+        const raw = localStorage.getItem(plannerStorageKey);
+        if (!raw) {
+          setPlannerDataMode("local");
+          setPlannerTasks([]);
+          return;
+        }
+
+        const parsed = JSON.parse(raw) as PlannerTask[];
+        if (!Array.isArray(parsed)) {
+          setPlannerDataMode("local");
+          setPlannerTasks([]);
+          return;
+        }
+
+        const filtered = parsed.filter(
+          (task) =>
+            typeof task.id === "string" &&
+            typeof task.dateKey === "string" &&
+            typeof task.title === "string" &&
+            (task.status === "ongoing" || task.status === "completed" || task.status === "missed"),
         );
+
+        const { tasks } = markOverdueTasks(filtered);
+        setPlannerDataMode("local");
+        setPlannerTasks(tasks);
+      } catch {
+        setPlannerDataMode("local");
+        setPlannerTasks([]);
       }
-    } catch {
-      setPlannerTasks([]);
-    }
-  }, [plannerStorageKey]);
+    };
+
+    void loadPlannerData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [plannerStorageKey, profile?.id]);
 
   useEffect(() => {
-    if (!plannerStorageKey) return;
+    if (!plannerStorageKey || plannerDataMode !== "local") return;
     localStorage.setItem(plannerStorageKey, JSON.stringify(plannerTasks));
-  }, [plannerStorageKey, plannerTasks]);
+  }, [plannerStorageKey, plannerTasks, plannerDataMode]);
 
-  const addPlannerTask = () => {
+  const addPlannerTask = async () => {
     const title = plannerInput.trim();
     if (!title) return;
 
@@ -222,38 +297,157 @@ export default function Dashboard() {
       ? crypto.randomUUID()
       : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-    setPlannerTasks((prev) => [
-      {
-        id: taskId,
-        dateKey: selectedDateKey,
-        title,
-        status: "ongoing",
-        createdAt: new Date().toISOString(),
-      },
-      ...prev,
-    ]);
+    const newTask: PlannerTask = {
+      id: taskId,
+      dateKey: selectedDateKey,
+      title,
+      status: "ongoing",
+      createdAt: new Date().toISOString(),
+    };
+
+    if (plannerDataMode === "supabase" && profile?.id) {
+      const { data, error } = await supabase
+        .from("planner_tasks")
+        .insert({
+          id: taskId,
+          user_id: profile.id,
+          date_key: selectedDateKey,
+          title,
+          status: "ongoing",
+        })
+        .select("id, date_key, title, status, created_at")
+        .maybeSingle();
+
+      if (!error && data) {
+        setPlannerTasks((prev) => [
+          {
+            id: data.id,
+            dateKey: data.date_key,
+            title: data.title,
+            status: data.status === "completed" || data.status === "missed" ? data.status : "ongoing",
+            createdAt: typeof data.created_at === "string" ? data.created_at : new Date().toISOString(),
+          },
+          ...prev,
+        ]);
+        setPlannerInput("");
+        setPlannerTab("ongoing");
+        return;
+      }
+    }
+
+    setPlannerDataMode("local");
+    setPlannerTasks((prev) => [newTask, ...prev]);
     setPlannerInput("");
     setPlannerTab("ongoing");
   };
 
-  const toggleTaskCompleted = (taskId: string) => {
-    setPlannerTasks((prev) =>
-      prev.map((task) =>
-        task.id === taskId
-          ? { ...task, status: task.status === "completed" ? "ongoing" : "completed" }
-          : task,
-      ),
-    );
+  const toggleTaskCompleted = async (taskId: string) => {
+    const task = plannerTasks.find((item) => item.id === taskId);
+    if (!task) return;
+
+    const nextStatus: PlannerStatus = task.status === "completed" ? "ongoing" : "completed";
+
+    if (plannerDataMode === "supabase" && profile?.id) {
+      const { error } = await supabase
+        .from("planner_tasks")
+        .update({ status: nextStatus })
+        .eq("id", taskId)
+        .eq("user_id", profile.id);
+
+      if (error) {
+        setPlannerDataMode("local");
+      }
+    }
+
+    setPlannerTasks((prev) => prev.map((item) => (item.id === taskId ? { ...item, status: nextStatus } : item)));
   };
 
-  const markTaskMissed = (taskId: string) => {
-    setPlannerTasks((prev) =>
-      prev.map((task) => (task.id === taskId ? { ...task, status: "missed" } : task)),
-    );
+  const markTaskMissed = async (taskId: string) => {
+    if (plannerDataMode === "supabase" && profile?.id) {
+      const { error } = await supabase
+        .from("planner_tasks")
+        .update({ status: "missed" })
+        .eq("id", taskId)
+        .eq("user_id", profile.id);
+
+      if (error) {
+        setPlannerDataMode("local");
+      }
+    }
+
+    setPlannerTasks((prev) => prev.map((task) => (task.id === taskId ? { ...task, status: "missed" } : task)));
   };
 
-  const deletePlannerTask = (taskId: string) => {
+  const deletePlannerTask = async (taskId: string) => {
+    if (plannerDataMode === "supabase" && profile?.id) {
+      const { error } = await supabase.from("planner_tasks").delete().eq("id", taskId).eq("user_id", profile.id);
+      if (error) {
+        setPlannerDataMode("local");
+      }
+    }
+
     setPlannerTasks((prev) => prev.filter((task) => task.id !== taskId));
+  };
+
+  const exportPlannerData = () => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      userId: profile?.id || "local-user",
+      tasks: plannerTasks,
+    };
+
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `planner-${formatDateKey(new Date())}.json`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePlannerImport = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as { tasks?: PlannerTask[] };
+      const incoming = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+
+      const cleaned = incoming.filter(
+        (task) =>
+          typeof task.id === "string" &&
+          typeof task.dateKey === "string" &&
+          typeof task.title === "string" &&
+          (task.status === "ongoing" || task.status === "completed" || task.status === "missed"),
+      );
+
+      if (cleaned.length === 0) return;
+
+      const merged = Array.from(new Map([...plannerTasks, ...cleaned].map((task) => [task.id, task])).values());
+      setPlannerTasks(merged);
+
+      if (plannerDataMode === "supabase" && profile?.id) {
+        await Promise.all(
+          cleaned.map((task) =>
+            supabase.from("planner_tasks").upsert(
+              {
+                id: task.id,
+                user_id: profile.id,
+                date_key: task.dateKey,
+                title: task.title,
+                status: task.status,
+              },
+              { onConflict: "id" },
+            ),
+          ),
+        );
+      }
+    } catch {
+      // ignore invalid import payloads
+    } finally {
+      if (plannerImportInputRef.current) plannerImportInputRef.current.value = "";
+    }
   };
 
   useEffect(() => {
@@ -730,6 +924,31 @@ export default function Dashboard() {
                       >
                         Add
                       </button>
+                    </div>
+
+                    <div className="flex items-center gap-2 mb-4">
+                      <button
+                        onClick={exportPlannerData}
+                        className="px-3 py-1.5 text-xs rounded border border-white/15 text-gray-300 hover:bg-white/10"
+                      >
+                        Export
+                      </button>
+                      <button
+                        onClick={() => plannerImportInputRef.current?.click()}
+                        className="px-3 py-1.5 text-xs rounded border border-white/15 text-gray-300 hover:bg-white/10"
+                      >
+                        Import
+                      </button>
+                      <span className="text-xs text-gray-500">
+                        Mode: {plannerDataMode === "supabase" ? "Cloud" : "Local"}
+                      </span>
+                      <input
+                        ref={plannerImportInputRef}
+                        type="file"
+                        accept="application/json"
+                        className="hidden"
+                        onChange={handlePlannerImport}
+                      />
                     </div>
 
                     <div className="grid grid-cols-3 gap-2 mb-6">
