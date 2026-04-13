@@ -35,6 +35,39 @@ type AiInsight = {
   model_source?: string;
 };
 
+function buildLocalInsight(averageScore: number, completionPercentage: number): AiInsight {
+  if (averageScore >= 8 && completionPercentage >= 70) {
+    return {
+      learning_status: "On Track",
+      recommendations: [
+        "Continue your current pace and attempt one challenge quiz this week.",
+        "Revise one completed module to retain long-term memory.",
+      ],
+      model_source: "local_fallback",
+    };
+  }
+
+  if (averageScore >= 6) {
+    return {
+      learning_status: "Building Momentum",
+      recommendations: [
+        "Revisit one weak topic and solve 5 targeted questions.",
+        "Maintain a fixed daily learning window for consistency.",
+      ],
+      model_source: "local_fallback",
+    };
+  }
+
+  return {
+    learning_status: "Needs Strong Focus",
+    recommendations: [
+      "Repeat the latest section and retake the quiz after revision.",
+      "Break study into smaller sessions and track completion daily.",
+    ],
+    model_source: "local_fallback",
+  };
+}
+
 const COURSE_LABELS: Record<string, string> = {
   python_day_1: "Python 100 Days - Day 1",
   python_day_2: "Python 100 Days - Day 2",
@@ -122,9 +155,8 @@ export default function Dashboard() {
       // Check Course Progress
       const { data: progressData, error: progressError } = await supabase
         .from("course_progress")
-        .select("course_id, score, passed, updated_at")
-        .eq("user_id", userData.user.id)
-        .order("updated_at", { ascending: false });
+        .select("course_id, score, passed")
+        .eq("user_id", userData.user.id);
 
       const progressRows = ((progressData as CourseProgress[]) || []).filter((row) => row.course_id);
       if (!progressError && progressRows.length > 0) {
@@ -134,7 +166,12 @@ export default function Dashboard() {
         ).slice(0, 5);
         setRecentLearning(uniqueRecentRows);
 
-        const latestScore = typeof progressRows[0]?.score === "number" ? progressRows[0].score : 0;
+        const scores = progressRows
+          .map((row) => row.score)
+          .filter((value): value is number => typeof value === "number");
+
+        const averageScore = scores.length > 0 ? scores.reduce((sum, value) => sum + value, 0) / scores.length : 0;
+        const latestScore = scores.length > 0 ? scores[scores.length - 1] : 0;
         const attempts = progressRows.length;
         const passedCount = progressRows.filter((row) => row.passed === true).length;
         const completionPercentage = Math.min(100, Math.round((passedCount / Math.max(1, attempts)) * 100));
@@ -158,12 +195,16 @@ export default function Dashboard() {
             if (response.ok) {
               const insight = (await response.json()) as AiInsight;
               setAiInsight(insight);
+            } else {
+              setAiInsight(buildLocalInsight(averageScore, completionPercentage));
             }
           } catch {
-            setAiInsight(null);
+            setAiInsight(buildLocalInsight(averageScore, completionPercentage));
           } finally {
             setAiLoading(false);
           }
+        } else {
+          setAiInsight(buildLocalInsight(averageScore, completionPercentage));
         }
       }
 

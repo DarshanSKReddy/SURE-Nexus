@@ -149,8 +149,7 @@ export default function WebDevSection1Page() {
         .from("course_progress")
         .select("passed, score")
         .eq("user_id", userData.user.id)
-        .eq("course_id", "webdev_section_1")
-        .order("updated_at", { ascending: false });
+        .eq("course_id", "webdev_section_1");
 
       if (isCancelled) return;
 
@@ -190,20 +189,19 @@ export default function WebDevSection1Page() {
 
     const { data: userData } = await supabase.auth.getUser();
     if (userData?.user) {
-      const { error } = await supabase.from("course_progress").upsert({
+      const payload = {
         user_id: userData.user.id,
         course_id: "webdev_section_1",
         score: calculatedScore,
         passed,
+      };
+
+      const { error } = await supabase.from("course_progress").upsert(payload, {
+        onConflict: "user_id,course_id",
       });
 
       if (error) {
-        await supabase.from("course_progress").insert({
-          user_id: userData.user.id,
-          course_id: "webdev_section_1",
-          score: calculatedScore,
-          passed,
-        });
+        await supabase.from("course_progress").insert(payload);
       }
     }
 
